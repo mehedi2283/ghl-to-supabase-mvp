@@ -10,7 +10,6 @@ const items = [
     { title: "Contacts", href: "/contacts", icon: Users },
     { title: "Opportunities", href: "/opportunities", icon: Target },
     { title: "Conversations", href: "/conversations", icon: MessageSquare },
-    { title: "Sync Logs", href: "/logs", icon: Activity },
 ]
 
 export function Sidebar() {
