@@ -90,11 +90,13 @@ export class GHLClient {
         let allItems: any[] = []
         let nextToken: string | number | undefined = undefined
         let nextParam: 'startAfter' | 'startAfterId' | 'offset' | undefined = undefined
-        const SAFETY_LIMIT = 200 // Max 20,000 items (100 per page)
+        let previousToken: string | number | undefined = undefined
 
         console.log(`[GHL Client] Starting full fetch for ${endpoint}...`)
 
-        for (let i = 0; i < SAFETY_LIMIT; i++) {
+        // High safety limit (2,000 pages = 200,000 records) to prevent absolute hangs
+        // while fulfilling the "no limit" request for almost all practical cases.
+        for (let i = 0; i < 2000; i++) {
             const params: any = { limit: 100 }
 
             if (nextToken !== undefined && nextParam) {
@@ -103,50 +105,53 @@ export class GHLClient {
 
             const data = await this.fetchAPI(endpoint, params)
             const items = data[listKey] || []
-            if (!Array.isArray(items)) break;
+
+            if (!Array.isArray(items) || items.length === 0) {
+                console.log(`[GHL Client] End of data reached for ${endpoint}.`)
+                break
+            }
 
             allItems = allItems.concat(items)
             console.log(`[GHL Client] Fetched ${items.length} items (Total: ${allItems.length}) from ${endpoint}`)
 
             // GHL V2 Pagination logic
             let hasNext = false
+            previousToken = nextToken
+
             if (data.meta) {
-                // Check all known GHL pagination patterns
                 const meta = data.meta
 
-                if (meta.nextPageToken) {
-                    nextToken = meta.nextPageToken
-                    nextParam = 'startAfterId'
-                    hasNext = true
-                } else if (meta.nextStartAfterId) {
-                    nextToken = meta.nextStartAfterId
-                    nextParam = 'startAfterId'
-                    hasNext = true
-                } else if (meta.startAfterId && meta.startAfterId !== nextToken) {
-                    nextToken = meta.startAfterId
-                    nextParam = 'startAfterId'
-                    hasNext = true
-                } else if (typeof meta.startAfter === 'number' && meta.startAfter !== nextToken) {
-                    nextToken = meta.startAfter
-                    nextParam = 'startAfter'
-                    hasNext = true
-                } else if (typeof meta.nextOffset === 'number') {
-                    nextToken = meta.nextOffset
-                    nextParam = 'offset'
+                // Get the next token from any of the possible GHL V2 keys
+                const foundToken = meta.nextPageToken || meta.nextStartAfterId || meta.startAfterId || meta.startAfter || meta.nextOffset
+
+                if (foundToken && foundToken !== previousToken) {
+                    nextToken = foundToken
+                    // Set correct param name based on which meta key we found
+                    if (meta.nextPageToken || meta.nextStartAfterId || meta.startAfterId) {
+                        nextParam = 'startAfterId'
+                    } else if (typeof meta.startAfter === 'number') {
+                        nextParam = 'startAfter'
+                    } else if (typeof meta.nextOffset === 'number') {
+                        nextParam = 'offset'
+                    }
                     hasNext = true
                 }
             }
 
-            // If no next token found in meta, or we got less than 100 items, we might be at the end
-            // but GHL sometimes returns exactly 100 even if there are more.
-            if (!hasNext) {
-                if (items.length < 100) break;
-                // If we have 100 items but no meta token, we stop (GHL should provide meta for more)
-                break;
+            // If we have less than 100 items, we are definitely at the end
+            if (items.length < 100) {
+                console.log(`[GHL Client] Last page reached for ${endpoint}.`)
+                break
             }
 
-            if (i === SAFETY_LIMIT - 1) {
-                console.warn(`[GHL Client] Hit SAFETY_LIMIT (${SAFETY_LIMIT}) for ${endpoint}. Data may be truncated.`)
+            // If we fetched 100 items but no NEW token was found, we MUST stop to avoid infinite loop
+            if (!hasNext) {
+                console.log(`[GHL Client] No new pagination token found for ${endpoint}. Stopping.`)
+                break
+            }
+
+            if (i === 1999) {
+                console.warn(`[GHL Client] Hit 200,000 record safety limit for ${endpoint}.`)
             }
         }
 
