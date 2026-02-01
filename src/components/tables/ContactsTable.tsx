@@ -14,11 +14,11 @@ const columns = [
                     "w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shrink-0",
                     "bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-lg shadow-violet-500/20"
                 )}>
-                    {(row.full_name || 'U').charAt(0).toUpperCase()}
+                    {row.full_name ? row.full_name.charAt(0).toUpperCase() : '?'}
                 </div>
                 <div className="flex flex-col">
                     <span className="font-semibold text-slate-100 group-hover:text-violet-400 transition-colors">
-                        {row.full_name || 'Unknown'}
+                        {row.full_name || '?'}
                     </span>
                     <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest mt-0.5">Contact</span>
                 </div>

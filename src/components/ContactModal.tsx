@@ -55,27 +55,63 @@ export function ContactModal({ isOpen, onClose, onSuccess, contact }: ContactMod
         setLoading(true)
         setError(null)
 
-        if (!formData.email && !formData.phone) {
-            setError('Email or Phone is required')
+        // Trim all inputs
+        const trimmedData = {
+            firstName: formData.firstName.trim(),
+            lastName: formData.lastName.trim(),
+            email: formData.email.trim(),
+            phone: formData.phone.trim()
+        }
+
+        // Validate: at least one of email or phone is required
+        if (!trimmedData.email && !trimmedData.phone) {
+            setError('Please provide at least an email address or phone number')
+            setLoading(false)
+            return
+        }
+
+        // Validate email format only if email is provided
+        if (trimmedData.email) {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+            if (!emailRegex.test(trimmedData.email)) {
+                setError('Please enter a valid email address (e.g., name@example.com)')
+                setLoading(false)
+                return
+            }
+        }
+
+        // Validate phone format only if phone is provided (basic check)
+        if (trimmedData.phone && trimmedData.phone.length < 3) {
+            setError('Please enter a valid phone number')
             setLoading(false)
             return
         }
 
         try {
+            // Convert empty strings to null for nullable fields
+            const payload = {
+                firstName: trimmedData.firstName || null,
+                lastName: trimmedData.lastName || null,
+                email: trimmedData.email || null,
+                phone: trimmedData.phone || null,
+            }
+
             const res = await fetch('/api/contacts/upsert', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(formData)
+                body: JSON.stringify(payload)
             })
 
             const data = await res.json()
 
-            if (!res.ok) throw new Error(data.error || 'Failed to save contact')
+            if (!res.ok) {
+                throw new Error(data.error || 'Failed to save contact. Please try again.')
+            }
 
             onSuccess()
             onClose()
         } catch (err: any) {
-            setError(err.message)
+            setError(err.message || 'An unexpected error occurred. Please try again.')
         } finally {
             setLoading(false)
         }
@@ -98,7 +134,7 @@ export function ContactModal({ isOpen, onClose, onSuccess, contact }: ContactMod
                 </div>
 
                 {/* Form */}
-                <form onSubmit={handleSubmit} className="p-6 space-y-6">
+                <form onSubmit={handleSubmit} noValidate className="p-6 space-y-6">
                     {error && (
                         <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
                             {error}
@@ -139,11 +175,11 @@ export function ContactModal({ isOpen, onClose, onSuccess, contact }: ContactMod
                         <div className="relative">
                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
                             <input
-                                type="email"
+                                type="text"
                                 value={formData.email}
                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                                 className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 transition-all font-medium"
-                                placeholder="john.doe@example.com"
+                                placeholder="john.doe@example.com (optional)"
                             />
                         </div>
                     </div>
@@ -157,7 +193,7 @@ export function ContactModal({ isOpen, onClose, onSuccess, contact }: ContactMod
                                 value={formData.phone}
                                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                                 className="w-full pl-10 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-violet-500/50 transition-all font-medium"
-                                placeholder="+1 234 567 8900"
+                                placeholder="+1 234 567 8900 (optional)"
                             />
                         </div>
                     </div>

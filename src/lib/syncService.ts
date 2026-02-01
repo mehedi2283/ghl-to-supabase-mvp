@@ -114,7 +114,7 @@ function mapEntityToRow(entity: SyncEntity, item: any) {
                 ...base,
                 ghl_contact_id: item.id,
                 location_id: item.locationId,
-                full_name: [item.firstName, item.lastName].filter(Boolean).join(' ') || item.contactName || item.name,
+                full_name: [item.firstName, item.lastName].filter(Boolean).join(' ') || null,
                 email: item.email,
                 phone: item.phone,
                 business_name: item.companyName,

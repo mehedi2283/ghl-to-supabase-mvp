@@ -60,6 +60,8 @@ export class GHLClient {
     }
 
     async upsertContact(data: any) {
+        // Use upsert endpoint for both create and update
+        // GHL handles duplicate detection based on Location settings
         return this.fetchAPI('/contacts/upsert', {}, {
             method: 'POST',
             body: {
@@ -88,9 +90,9 @@ export class GHLClient {
 
     private async fetchAllPages(endpoint: string, listKey: string) {
         let allItems: any[] = []
-        let nextToken: string | number | undefined = undefined
-        let nextParam: 'startAfter' | 'startAfterId' | 'offset' | undefined = undefined
-        let previousToken: string | number | undefined = undefined
+        let startAfterId: string | undefined = undefined
+        let startAfter: number | undefined = undefined
+        const seenIds = new Set<string>()
 
         console.log(`[GHL Client] Starting full fetch for ${endpoint}...`)
 
@@ -99,8 +101,10 @@ export class GHLClient {
         for (let i = 0; i < 2000; i++) {
             const params: any = { limit: 100 }
 
-            if (nextToken !== undefined && nextParam) {
-                params[nextParam] = nextToken
+            // GHL API requires BOTH startAfterId AND startAfter for proper pagination
+            if (startAfterId && startAfter) {
+                params.startAfterId = startAfterId
+                params.startAfter = startAfter
             }
 
             const data = await this.fetchAPI(endpoint, params)
@@ -111,42 +115,64 @@ export class GHLClient {
                 break
             }
 
-            allItems = allItems.concat(items)
-            console.log(`[GHL Client] Fetched ${items.length} items (Total: ${allItems.length}) from ${endpoint}`)
+            // Filter out duplicates using ID tracking
+            const newItems = items.filter((item: any) => {
+                if (!item.id || seenIds.has(item.id)) {
+                    return false
+                }
+                seenIds.add(item.id)
+                return true
+            })
+
+            if (newItems.length === 0) {
+                console.log(`[GHL Client] All items in this page were duplicates. Stopping pagination for ${endpoint}.`)
+                break
+            }
+
+            allItems = allItems.concat(newItems)
+            console.log(`[GHL Client] Fetched ${newItems.length} new items (${items.length - newItems.length} duplicates, Total: ${allItems.length}) from ${endpoint}`)
 
             // GHL V2 Pagination logic
             let hasNext = false
-            previousToken = nextToken
 
             if (data.meta) {
                 const meta = data.meta
 
-                // Get the next token from any of the possible GHL V2 keys
-                const foundToken = meta.nextPageToken || meta.nextStartAfterId || meta.startAfterId || meta.startAfter || meta.nextOffset
-
-                if (foundToken && foundToken !== previousToken) {
-                    nextToken = foundToken
-                    // Set correct param name based on which meta key we found
-                    if (meta.nextPageToken || meta.nextStartAfterId || meta.startAfterId) {
-                        nextParam = 'startAfterId'
-                    } else if (typeof meta.startAfter === 'number') {
-                        nextParam = 'startAfter'
-                    } else if (typeof meta.nextOffset === 'number') {
-                        nextParam = 'offset'
-                    }
+                // Check if there are more pages based on meta information
+                // Method 1: Check if meta.total indicates more records
+                if (meta.total && allItems.length < meta.total) {
                     hasNext = true
+                }
+
+                // Method 2: Check if meta.nextPage exists
+                if (meta.nextPage !== null && meta.nextPage !== undefined) {
+                    hasNext = true
+                }
+
+                // Get pagination tokens - GHL requires BOTH for proper pagination
+                if (hasNext) {
+                    const newStartAfterId = meta.nextStartAfterId || meta.startAfterId
+                    const newStartAfter = meta.startAfter
+
+                    if (newStartAfterId && newStartAfter) {
+                        startAfterId = newStartAfterId
+                        startAfter = newStartAfter
+                    } else {
+                        console.warn(`[GHL Client] Meta indicates more pages but missing pagination tokens for ${endpoint}. Stopping.`)
+                        hasNext = false
+                    }
                 }
             }
 
-            // If we have less than 100 items, we are definitely at the end
-            if (items.length < 100) {
-                console.log(`[GHL Client] Last page reached for ${endpoint}.`)
+            // If we have less than 100 NEW items, we might be at the end
+            if (newItems.length < 100) {
+                console.log(`[GHL Client] Last page reached for ${endpoint} (received ${newItems.length} new items).`)
                 break
             }
 
-            // If we fetched 100 items but no NEW token was found, we MUST stop to avoid infinite loop
+            // If no more pages indicated by meta, stop
             if (!hasNext) {
-                console.log(`[GHL Client] No new pagination token found for ${endpoint}. Stopping.`)
+                console.log(`[GHL Client] No more pages indicated by meta for ${endpoint}. Stopping.`)
                 break
             }
 
