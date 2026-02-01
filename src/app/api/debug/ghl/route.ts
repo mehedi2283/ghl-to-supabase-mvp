@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { ghlClientFixed as ghlClient } from '@/lib/ghlClientFixed'
+import { ghlClient } from '@/lib/ghlClient'
 
 export const dynamic = 'force-dynamic'
 

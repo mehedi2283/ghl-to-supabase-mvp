@@ -6,10 +6,10 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(
     request: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        const conversationId = params.id
+        const { id: conversationId } = await params
         console.log('[Messages API] Fetching messages for conversation:', conversationId)
 
         // 1. Fetch messages from GHL

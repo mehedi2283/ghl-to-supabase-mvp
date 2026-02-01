@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
-import { ghlClientFixed } from '@/lib/ghlClientFixed'
+import { ghlClient } from '@/lib/ghlClient'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
     try {
-        const contacts = await ghlClientFixed.getContacts(1)
+        const contacts = await ghlClient.getContacts(1)
         return NextResponse.json({
             status: 'success',
             message: 'Connected to GHL',
