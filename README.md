@@ -1,51 +1,87 @@
-# GHL -> Supabase Sync Application
+Project Brief — GoHighLevel ↔ Supabase Sync Dashboard
 
-A Next.js 14 (App Router) application that synchronizes data from GoHighLevel to Supabase.
+Overview
+We built a lightweight, production-ready synchronization dashboard using Next.js that securely connects GoHighLevel (GHL) with Supabase. The goal was to automatically fetch data from GHL, store it reliably, and present it in a clean, usable interface—without manual intervention.
 
-## Features
-- **Dashboard**: View sync status and stats for Contacts, Pipelines, Opportunities, and Conversations.
-- **Manual Sync**: Trigger syncs for individual entities or all at once.
-- **Logging**: Detailed `sync_runs` table tracks every execution.
-- **Resilience**: JSONB storage for raw data ensures no data loss if schema changes.
+Architecture (High Level)
+- Frontend: Next.js (App Router)
+- Backend: Next.js API Routes (server-side)
+- Database: Supabase (PostgreSQL)
+- External API: GoHighLevel (OAuth-based access)
 
-## Tech Stack
-- Next.js 14 + TypeScript
-- Supabase (Postgres)
-- Tailwind CSS
-- Server Actions / Route Handlers for API logic
+No separate backend server was required. Next.js API routes act as the backend.
 
-## Setup
+--------------------------------
+How We Fetch Data (GoHighLevel)
+--------------------------------
+- We use official GoHighLevel APIs with OAuth access tokens.
+- Required scopes (e.g. conversations.readonly) are explicitly enabled.
+- Data is fetched via server-side API routes only (never from the browser).
+- Example entities fetched:
+  - Contacts
+  - Pipelines
+  - Opportunities
+  - Conversations
 
-1. **Clone & Install**
-   ```bash
-   git clone <repo>
-   npm install
-   ```
+This ensures:
+- Security (tokens never exposed)
+- Proper scope enforcement
+- Scalable sync logic
 
-2. **Supabase Setup**
-   - Create a new Supabase project.
-   - Go to SQL Editor and run the contents of [`schema.sql`](./schema.sql).
+--------------------------------
+How We Save Data (Supabase)
+--------------------------------
+- Each entity has its own table in Supabase.
+- We use an UPSERT strategy (insert or update) to avoid duplicates.
+- Each record includes:
+  - A unique GoHighLevel ID
+  - Key searchable fields (name, email, status, etc.)
+  - A `raw` JSON column containing the full original API response
+  - Timestamps for sync tracking
 
-3. **Environment Variables**
-   - Copy `.env.example` to `.env.local`
-   - Fill in your Supabase credentials (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
-   - Fill in your GHL credentials.
+Example approach:
+- If the record already exists → update it
+- If it does not exist → create it
+- This makes syncing idempotent and safe to rerun
 
-4. **Run**
-   ```bash
-   npm run dev
-   ```
+--------------------------------
+How We Trigger Sync (User Interaction)
+--------------------------------
+- The UI provides “Sync” buttons per entity (Contacts, Pipelines, etc.)
+- A “Sync All” button triggers all syncs sequentially
+- Button clicks call internal API routes (POST requests)
+- API routes handle:
+  - Fetching data from GHL
+  - Saving/updating records in Supabase
+  - Returning success/error responses
 
-## Architecture Decisions
+--------------------------------
+How We Show Data (Frontend)
+--------------------------------
+- The frontend is built as Client Components.
+- Data is loaded from Supabase via internal API routes.
+- No server functions are passed directly to the UI (clean separation).
+- Pages include:
+  - Dashboard summary (counts + last sync)
+  - Entity tabs (Contacts, Pipelines, Opportunities, Conversations)
+  - Tables rendered from Supabase data
+  - Sync activity/status indicators
 
-- **Sync Strategy**: We use an "Upsert" strategy. 
-    - We fetch data from GHL.
-    - We try to match existing records by their GHL ID (`ghl_*_id`).
-    - If found, we update; if not, we insert.
-    - Raw JSON is always stored in `raw` column to allow future backfilling of columns without re-fetching.
-- **Server-Side Only**: All GHL interactions happen on the server to protect API tokens.
-- **Sync Logs**: We persist a log of every run in `sync_runs` to provide visibility into the system's health.
+--------------------------------
+Security & Best Practices
+--------------------------------
+- All secrets stored as environment variables (Vercel + local)
+- Service role key used only on the server
+- OAuth scopes limited to required permissions
+- No direct database or GHL access from the browser
 
-## Testing
-- Use the Dashboard buttons to trigger syncs.
-- Check the "Activity Feed" or the `sync_runs` table in Supabase to verify success.
+--------------------------------
+Result
+--------------------------------
+- Fully automated sync between GoHighLevel and Supabase
+- No manual data handling
+- Clean, modern dashboard UI
+- Scalable and production-ready structure
+- Easy to extend with more entities or scheduled syncs
+
+This implementation follows modern Next.js best practices and provides a secure, maintainable foundation for future growth.
