@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GHL -> Supabase Sync Application
 
-## Getting Started
+A Next.js 14 (App Router) application that synchronizes data from GoHighLevel to Supabase.
 
-First, run the development server:
+## Features
+- **Dashboard**: View sync status and stats for Contacts, Pipelines, Opportunities, and Conversations.
+- **Manual Sync**: Trigger syncs for individual entities or all at once.
+- **Logging**: Detailed `sync_runs` table tracks every execution.
+- **Resilience**: JSONB storage for raw data ensures no data loss if schema changes.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Tech Stack
+- Next.js 14 + TypeScript
+- Supabase (Postgres)
+- Tailwind CSS
+- Server Actions / Route Handlers for API logic
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. **Clone & Install**
+   ```bash
+   git clone <repo>
+   npm install
+   ```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+2. **Supabase Setup**
+   - Create a new Supabase project.
+   - Go to SQL Editor and run the contents of [`schema.sql`](./schema.sql).
 
-## Learn More
+3. **Environment Variables**
+   - Copy `.env.example` to `.env.local`
+   - Fill in your Supabase credentials (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`).
+   - Fill in your GHL credentials.
 
-To learn more about Next.js, take a look at the following resources:
+4. **Run**
+   ```bash
+   npm run dev
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Architecture Decisions
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Sync Strategy**: We use an "Upsert" strategy. 
+    - We fetch data from GHL.
+    - We try to match existing records by their GHL ID (`ghl_*_id`).
+    - If found, we update; if not, we insert.
+    - Raw JSON is always stored in `raw` column to allow future backfilling of columns without re-fetching.
+- **Server-Side Only**: All GHL interactions happen on the server to protect API tokens.
+- **Sync Logs**: We persist a log of every run in `sync_runs` to provide visibility into the system's health.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Testing
+- Use the Dashboard buttons to trigger syncs.
+- Check the "Activity Feed" or the `sync_runs` table in Supabase to verify success.
