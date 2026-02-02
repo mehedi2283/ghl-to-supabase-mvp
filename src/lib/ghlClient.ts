@@ -14,21 +14,36 @@ export class GHLClient {
     }
 
     private async fetchAPI(endpoint: string, params: Record<string, any> = {}, options: { method?: string, body?: any } = {}) {
-        const url = new URL(`${this.baseUrl}${endpoint}`)
+        let url: URL
+        if (endpoint.startsWith('http')) {
+            url = new URL(endpoint)
+        } else {
+            url = new URL(`${this.baseUrl}${endpoint}`)
+        }
+
         const method = options.method || 'GET'
 
-        // Always attach locationId (or location_id for specific endpoints)
-        if (!params.locationId && !params.location_id && this.locationId && !options.body?.locationId) {
-            // Only opportunities/search uses location_id, everything else uses locationId
-            if (endpoint.includes('/opportunities/search')) {
-                params.location_id = this.locationId
-            } else {
-                params.locationId = this.locationId
+        // Always attach locationId if not present (unless it's an absolute URL which likely has it)
+        if (!endpoint.startsWith('http')) {
+            if (!params.locationId && !params.location_id && this.locationId && !options.body?.locationId) {
+                // Only opportunities/search uses location_id, everything else uses locationId
+                if (endpoint.includes('/opportunities/search')) {
+                    params.location_id = this.locationId
+                } else {
+                    params.locationId = this.locationId
+                }
             }
         }
 
+        // Append params
         Object.keys(params).forEach(key => {
             if (params[key] !== undefined && params[key] !== null) {
+                // If the key already exists (e.g. from absolute URL), delete it first to override? 
+                // Or just append? URLSearchParams supports multiple values. 
+                // GHL might not like multiple values. Safest is set() or delete then append.
+                if (url.searchParams.has(key)) {
+                    url.searchParams.delete(key)
+                }
                 url.searchParams.append(key, String(params[key]))
             }
         })
@@ -56,7 +71,8 @@ export class GHLClient {
     }
 
     async getContacts(limit = 20) {
-        return this.fetchAllPages('/contacts', 'contacts')
+        // Use POST search for robust pagination
+        return this.fetchSearch('/contacts/search', 'contacts')
     }
 
     async upsertContact(data: any) {
@@ -88,26 +104,96 @@ export class GHLClient {
         return this.fetchAllPages(`/conversations/${conversationId}/messages`, 'messages')
     }
 
+    /**
+     * Generic fetcher for POST search endpoints (like /contacts/search) that use 
+     * ElasticSearch-style pagination (searchAfter in the last item).
+     */
+    private async fetchSearch(endpoint: string, listKey: string) {
+        let allItems: any[] = []
+        let searchAfter: any[] | undefined = undefined
+        const seenIds = new Set<string>()
+
+        console.log(`[GHL Client] Starting search fetch for ${endpoint}...`)
+
+        let pageCount = 0
+        while (true) {
+            pageCount++
+            const payload: any = {
+                locationId: this.locationId,
+                pageLimit: 100
+            }
+            if (searchAfter) {
+                payload.searchAfter = searchAfter
+            }
+
+            const data = await this.fetchAPI(endpoint, {}, {
+                method: 'POST',
+                body: payload
+            })
+
+            const items = data[listKey] || []
+
+            if (!Array.isArray(items) || items.length === 0) {
+                console.log(`[GHL Client] End of data reached for ${endpoint}.`)
+                break
+            }
+
+            // Filter duplicates
+            const newItems = items.filter((item: any) => {
+                if (!item.id || seenIds.has(item.id)) {
+                    return false
+                }
+                seenIds.add(item.id)
+                return true
+            })
+
+            if (newItems.length === 0) {
+                console.log(`[GHL Client] All items in this page were duplicates. Stopping search for ${endpoint}.`)
+                break
+            }
+
+            allItems = allItems.concat(newItems)
+            console.log(`[GHL Client] Page ${pageCount}: Fetched ${newItems.length} new items. Total: ${allItems.length}`)
+
+            // Get cursor for next page from the last item
+            const lastItem = items[items.length - 1]
+            if (lastItem && lastItem.searchAfter && Array.isArray(lastItem.searchAfter)) {
+                searchAfter = lastItem.searchAfter
+            } else {
+                console.log(`[GHL Client] Last item has no searchAfter cursor. Stopping.`)
+                break
+            }
+        }
+
+        console.log(`[GHL Client] Finished search for ${endpoint}. Total items: ${allItems.length}`)
+        return allItems
+    }
+
     private async fetchAllPages(endpoint: string, listKey: string) {
         let allItems: any[] = []
-        let startAfterId: string | undefined = undefined
-        let startAfter: number | undefined = undefined
+        let nextUrl: string | null = null
         const seenIds = new Set<string>()
 
         console.log(`[GHL Client] Starting full fetch for ${endpoint}...`)
 
-        // High safety limit (2,000 pages = 200,000 records) to prevent absolute hangs
-        // while fulfilling the "no limit" request for almost all practical cases.
-        for (let i = 0; i < 2000; i++) {
-            const params: any = { limit: 100 }
+        let pageCount = 0
+        while (true) {
+            pageCount++
 
-            // GHL API requires BOTH startAfterId AND startAfter for proper pagination
-            if (startAfterId && startAfter) {
-                params.startAfterId = startAfterId
-                params.startAfter = startAfter
+            // First page params
+            const params: Record<string, any> = {}
+            if (pageCount === 1) {
+                params.limit = 100
             }
 
-            const data = await this.fetchAPI(endpoint, params)
+            // Use nextUrl if available, otherwise use initial endpoint
+            const currentEndpoint = nextUrl || endpoint
+
+            // If using nextUrl, we don't pass 'limit' param again as it should be in the URL,
+            // UNLESS we want to override it. fetchAPI logic will override if we pass params.
+            // But if nextUrl comes from GHL, it likely has the limit of the previous req (which is 100).
+
+            const data = await this.fetchAPI(currentEndpoint, params)
             const items = data[listKey] || []
 
             if (!Array.isArray(items) || items.length === 0) {
@@ -130,54 +216,35 @@ export class GHLClient {
             }
 
             allItems = allItems.concat(newItems)
-            console.log(`[GHL Client] Fetched ${newItems.length} new items (${items.length - newItems.length} duplicates, Total: ${allItems.length}) from ${endpoint}`)
+            console.log(`[GHL Client] Page ${pageCount}: Fetched ${newItems.length} new items (${items.length - newItems.length} duplicates, Total: ${allItems.length}) from ${endpoint}`)
 
-            // GHL V2 Pagination logic
-            let hasNext = false
+            // Pagination Logic
+            nextUrl = null
 
             if (data.meta) {
-                const meta = data.meta
-
-                // Check if there are more pages based on meta information
-                // Method 1: Check if meta.total indicates more records
-                if (meta.total && allItems.length < meta.total) {
-                    hasNext = true
+                if (data.meta.nextPageUrl) {
+                    nextUrl = data.meta.nextPageUrl
                 }
-
-                // Method 2: Check if meta.nextPage exists
-                if (meta.nextPage !== null && meta.nextPage !== undefined) {
-                    hasNext = true
-                }
-
-                // Get pagination tokens - GHL requires BOTH for proper pagination
-                if (hasNext) {
-                    const newStartAfterId = meta.nextStartAfterId || meta.startAfterId
-                    const newStartAfter = meta.startAfter
-
-                    if (newStartAfterId && newStartAfter) {
-                        startAfterId = newStartAfterId
-                        startAfter = newStartAfter
-                    } else {
-                        console.warn(`[GHL Client] Meta indicates more pages but missing pagination tokens for ${endpoint}. Stopping.`)
-                        hasNext = false
+                // Fallback for endpoints that use nextStartAfterId but not nextPageUrl (rare in V2 but possible)
+                else if (data.meta.nextStartAfterId) {
+                    // Construct URL manually if needed
+                    console.log(`[GHL Client] No nextPageUrl, using nextStartAfterId construction.`)
+                    const url = new URL(`${this.baseUrl}${endpoint}`)
+                    url.searchParams.set('limit', '100')
+                    url.searchParams.set('startAfterId', data.meta.nextStartAfterId)
+                    if (data.meta.startAfter) {
+                        url.searchParams.set('startAfter', data.meta.startAfter)
                     }
+                    // We must ensure locationId is there too if constructed manually
+                    url.searchParams.set('locationId', this.locationId)
+
+                    nextUrl = url.toString()
                 }
             }
 
-            // If we have less than 100 NEW items, we might be at the end
-            if (newItems.length < 100) {
-                console.log(`[GHL Client] Last page reached for ${endpoint} (received ${newItems.length} new items).`)
+            if (!nextUrl) {
+                console.log(`[GHL Client] No next page URL/token found in meta. Stopping.`);
                 break
-            }
-
-            // If no more pages indicated by meta, stop
-            if (!hasNext) {
-                console.log(`[GHL Client] No more pages indicated by meta for ${endpoint}. Stopping.`)
-                break
-            }
-
-            if (i === 1999) {
-                console.warn(`[GHL Client] Hit 200,000 record safety limit for ${endpoint}.`)
             }
         }
 
